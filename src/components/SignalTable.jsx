@@ -1,6 +1,10 @@
 // src/components/SignalTable.jsx
+import React from 'react'
+import { ethers } from 'ethers'
+import { formatNumber } from '../utils/format.js'
+import { SparklineChart } from './SparklineChart.jsx'
 
-export const SignalTable = ({ signals, provider, metricLens }) => {
+export const SignalTable = ({ signals, metricLens }) => {
   // Add loading animation component
   const LoadingAnimation = () => (
     <div className="bg-[#161b22] border border-gray-700 rounded-lg overflow-hidden p-4">
@@ -105,11 +109,7 @@ export const SignalTable = ({ signals, provider, metricLens }) => {
         </td>
         <td className="py-4 px-4">
           <div className="flex justify-center">
-            <StakeActions 
-              signalId={signal.id} 
-              provider={provider} 
-              disabled={signal.isUpdating}
-            />
+            {/* StakeActions removed per requirement to avoid RPC usage */}
           </div>
         </td>
       </tr>

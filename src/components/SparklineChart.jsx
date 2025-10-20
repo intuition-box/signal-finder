@@ -1,5 +1,8 @@
 import React from 'react';
 import { Line } from 'react-chartjs-2';
+import { Chart as ChartJS, LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend, Filler } from 'chart.js';
+
+ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend, Filler);
 
 export const SparklineChart = ({ data, velocity, isUpdating }) => {
   const chartData = {
@@ -36,9 +39,11 @@ export const SparklineChart = ({ data, velocity, isUpdating }) => {
     animation: false
   };
 
+  const instanceKey = `${data.labels.length}-${data.labels[data.labels.length - 1] || ''}-${velocity}`;
+
   return (
     <div className={`relative w-24 h-8 ${isUpdating ? 'animate-pulse' : ''}`}>
-      <Line data={chartData} options={options} />
+      <Line key={instanceKey} data={chartData} options={options} redraw />
     </div>
   );
 };
