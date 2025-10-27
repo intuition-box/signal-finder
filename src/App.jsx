@@ -1,39 +1,31 @@
 // src/App.jsx
-import React, { useState, useEffect, useMemo, useCallback } from 'react'; // Added React import
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { processSignalData } from './utils/analysis.js';
 import { SignalTable } from './components/SignalTable.jsx';
-// Assuming WalletConnect is imported from its own file now
-// import { WalletConnect } from './components/WalletConnect.jsx'; 
-// Assuming NetworkStatus is imported from its own file now
-// import { NetworkStatus } from './components/NetworkStatus.jsx'; 
 import { ethers } from 'ethers';
 
-const GRAPH_URL = import.meta.env.VITE_API_ENDPOINT || "https://testnet.intuition.sh/v1/graphql";
+// NEW: All traffic goes through our local proxy
+const GRAPH_URL = "/graphql"; 
+const WSS_URL = `wss://${window.location.host}/graphql`;
 
-// Query 1: Fetches the list of terms sorted by market cap
+// Query 1: Fetches the 100 *most recently active* terms
 const GET_TERMS_LIST = `
   query GetTermsList {
-    terms(limit: 10, order_by: {total_market_cap: desc}) {
+    terms(limit: 100, order_by: {updated_at: desc}) {
       id
+      updated_at
       total_market_cap
-      atom {
-        label
-        image
-      }
-      positions_aggregate {
-        aggregate {
-          count
-        }
-      }
+      atom { label image }
+      positions_aggregate { aggregate { count } }
     }
   }
 `;
 
-// Query 2: Fetches positions history for a term
+// Query 2: Fetches the raw position history
 const GET_POSITIONS_HISTORY = `
   query GetPositionsHistory($termId: String!) {
     term(id: $termId) {
-      positions(order_by: {created_at: asc}, limit: 100) {
+      positions(order_by: {created_at: asc}, limit: 1000) {
         account_id
         shares
         created_at
@@ -42,14 +34,12 @@ const GET_POSITIONS_HISTORY = `
   }
 `;
 
-// --- Re-usable Components ---
-// Assume WalletConnect is imported or defined if needed
+// --- UI Components ---
 const WalletConnect = ({ account, onConnect }) => {
   const [isConnecting, setIsConnecting] = useState(false);
   const handleConnect = async () => {
     setIsConnecting(true);
-    try { await onConnect(); }
-    finally { setIsConnecting(false); }
+    try { await onConnect(); } finally { setIsConnecting(false); }
   };
   return account ? (
     <div className="px-4 py-2 bg-gray-800 text-green-400 rounded-md font-mono text-sm">{`${account.slice(0, 6)}...${account.slice(-4)}`}</div>
@@ -59,10 +49,31 @@ const WalletConnect = ({ account, onConnect }) => {
     </button>
   );
 };
-// Assume NetworkStatus is imported or defined if needed
-// const NetworkStatus = ({ wsStatus, blockNumber }) => { /* ... definition ... */ };
 
+const NetworkStatus = ({ wsStatus, blockNumber }) => {
+    const getStatusColor = () => {
+        switch(wsStatus) {
+            case 'connected': return 'bg-green-500';
+            case 'connecting': return 'bg-yellow-500';
+            default: return 'bg-red-500';
+        }
+    };
+    return (
+        <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2" title={`WebSocket Status: ${wsStatus}`}>
+                <div className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'animate-pulse' : ''} ${getStatusColor()}`} />
+                <span className="text-sm text-gray-400">LIVE</span>
+            </div>
+            {blockNumber && (
+                <div className="px-3 py-1 bg-gray-900 border border-gray-700 rounded-md">
+                    <span className="text-sm text-green-400 font-mono">{blockNumber}</span>
+                </div>
+            )}
+        </div>
+    );
+};
 
+// --- Main App Component ---
 function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -70,9 +81,9 @@ function App() {
   const [provider, setProvider] = useState(null);
   const [metricLens, setMetricLens] = useState('capital');
   const [sortLens, setSortLens] = useState('heavyweight');
-  const [timeframe, setTimeframe] = useState('hourly'); // Keep for analysis consistency
   const [error, setError] = useState(null);
-  // WebSocket state can be added back later if needed
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [blockNumber, setBlockNumber] = useState(null);
 
   const connectWallet = async () => {
     if (window.ethereum) {
@@ -93,26 +104,22 @@ function App() {
   const fetchAllSignalData = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try { // CORRECTED: try block wraps the entire fetch sequence
+    try {
       const listResponse = await fetch(GRAPH_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: GET_TERMS_LIST })
       });
       const listData = await listResponse.json();
-      console.log("Raw Terms List Response:", listData); // Debug log
       if (listData.errors) throw new Error(`GraphQL Error (List): ${JSON.stringify(listData.errors)}`);
-
+      
       const baseTerms = listData.data?.terms;
       if (!baseTerms || baseTerms.length === 0) {
         setSignals([]);
         console.warn("No terms found matching the query.");
-        return; 
+        return;
       }
 
-      // Limit client-side if needed (API already limits to 10)
-      const limitedTerms = baseTerms; // Use all 10 fetched
-
-      const historyPromises = limitedTerms.map(term =>
+      const historyPromises = baseTerms.map(term =>
         fetch(GRAPH_URL, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: GET_POSITIONS_HISTORY, variables: { termId: term.id } })
@@ -120,49 +127,110 @@ function App() {
       );
       const historyResults = await Promise.all(historyPromises);
 
-      const enrichedTerms = limitedTerms.map((term, index) => {
+      const enrichedTerms = baseTerms.map((term, index) => {
         const historyData = historyResults[index];
-        if (historyData.errors) {
-          console.error(`Error fetching history for ${term.id}:`, historyData.errors);
-        }
-        console.log(`History Data for ${term.id}:`, historyData?.data?.term); // Debug log
-
-        // CORRECTED: Attach 'positions' data correctly
-        return {
-          ...term,
-          positions: historyData?.data?.term?.positions || []
-        };
+        if (historyData.errors) console.error(`Error fetching history for ${term.id}:`, historyData.errors);
+        return { ...term, positions: historyData?.data?.term?.positions || [] };
       });
-
-      // CORRECTED: Process signals AFTER the loop
-      const processedSignals = processSignalData(enrichedTerms, timeframe);
+      
+      const processedSignals = processSignalData(enrichedTerms);
       setSignals(processedSignals);
 
-    } catch (err) { // CORRECTED: catch block placement
+    } catch (err) {
       console.error('Error fetching comprehensive signal data:', err);
       setError(err.message);
-    } finally { // CORRECTED: finally block placement
+    } finally {
       setLoading(false);
     }
-  }, [timeframe]); // fetch depends on timeframe if analysis uses it
+  }, []); 
 
   useEffect(() => {
     fetchAllSignalData();
   }, [fetchAllSignalData]);
 
+  // WebSocket useEffect
+  useEffect(() => {
+    let ws;
+    let reconnectTimeout;
+    const setupWebSocket = () => {
+      ws = new WebSocket(WSS_URL, 'graphql-ws'); // Use proxied URL
+      setWsStatus('connecting');
+      ws.onopen = () => {
+        setWsStatus('connected');
+        ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+        ws.send(JSON.stringify({
+          id: 'block-subscription',
+          type: 'start',
+          payload: { query: 'subscription { newBlocks { number } }' }
+        }));
+      };
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'data' && data.payload?.data?.newBlocks) {
+          setBlockNumber(parseInt(data.payload.data.newBlocks.number, 16));
+        }
+      };
+      ws.onerror = (err) => {
+        console.error("WebSocket Error:", err);
+        setWsStatus('error');
+      };
+      ws.onclose = () => {
+        setWsStatus('disconnected');
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = setTimeout(setupWebSocket, 5000);
+      };
+    };
+    setupWebSocket();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (ws) ws.close();
+    };
+  }, []); // Runs once on mount
+
+  // --- Sorting Logic with Filters ---
   const sortedSignals = useMemo(() => {
-    const newSignals = [...signals];
+    const HEAVYWEIGHT_MIN_CAPITAL = 1000;
+    const HEAVYWEIGHT_MIN_COMMUNITY = 500;
+
+    const signalsWithData = signals.map(s => {
+      let numericTotal = 0;
+      if (metricLens === 'capital') {
+        try { numericTotal = parseFloat(ethers.utils.formatEther(s.totalStaked || '0')); } catch {}
+      } else { numericTotal = s.totalStakers || 0; }
+      
+      return {
+        ...s,
+        numericTotal,
+        capitalTrend: s.capitalTrend || createDefaultTrend(),
+        communityTrend: s.communityTrend || createDefaultTrend()
+      };
+    });
+
     const trendType = metricLens === 'capital' ? 'capitalTrend' : 'communityTrend';
+    const totalKey = metricLens === 'capital' ? 'numericTotal' : 'numericCommunityTotal';
+    const threshold = metricLens === 'capital' ? HEAVYWEIGHT_MIN_CAPITAL : HEAVYWEIGHT_MIN_COMMUNITY;
+
+    let filteredSignals;
+    let sortedList;
+
     switch (sortLens) {
       case 'emerging':
-        return newSignals.sort((a, b) => (b[trendType]?.acceleration || -Infinity) - (a[trendType]?.acceleration || -Infinity));
+        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold && s.communityTrend.recentStakers > 0);
+        sortedList = filteredSignals.sort((a, b) => b.communityTrend.recentStakers - a.communityTrend.recentStakers);
+        break;
       case 'trending':
-        return newSignals.sort((a, b) => (b[trendType]?.velocity || -Infinity) - (a[trendType]?.velocity || -Infinity));
+        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold && s.capitalTrend.recentCapital > 0);
+        sortedList = filteredSignals.sort((a, b) => b.capitalTrend.recentCapital - a.capitalTrend.recentCapital);
+        break;
       case 'heavyweight':
       default:
-        const sortKey = metricLens === 'capital' ? 'totalStaked' : 'totalStakers';
-        return newSignals.sort((a, b) => parseFloat(b[sortKey] || 0) - parseFloat(a[sortKey] || 0));
+        filteredSignals = signalsWithData.filter(s => s[totalKey] > 0);
+        sortedList = filteredSignals.sort((a, b) => b[totalKey] - a[totalKey]);
+        break;
     }
+    
+    return sortedList.slice(0, 10); // Show only the Top 10 from the sorted/filtered list
+    
   }, [signals, metricLens, sortLens]);
 
   return (
@@ -171,15 +239,15 @@ function App() {
         <header className="mb-8">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-white">Intuition Protocol Signal Finder</h1>
-            <WalletConnect account={account} onConnect={connectWallet} />
-             {/* Include NetworkStatus here if you have it */}
-             {/* <NetworkStatus wsStatus={wsStatus} blockNumber={blockNumber} /> */}
+            <div className="flex items-center gap-4">
+                <NetworkStatus wsStatus={wsStatus} blockNumber={blockNumber} />
+                <WalletConnect account={account} onConnect={connectWallet} />
+            </div>
           </div>
           <p className="text-gray-400">Tracking live staking velocity to find signals of emerging trust.</p>
         </header>
         <main>
           <div className="flex flex-wrap items-center gap-4 mb-4">
-            {/* Control buttons remain the same */}
             <div className="flex items-center gap-2 p-1 bg-gray-900 rounded-md">
                 <button onClick={() => setMetricLens('capital')} className={`px-3 py-1 rounded text-sm font-medium ${metricLens === 'capital' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-800'}`}>By Capital ($)</button>
                 <button onClick={() => setMetricLens('community')} className={`px-3 py-1 rounded text-sm font-medium ${metricLens === 'community' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-800'}`}>By Community (#)</button>
@@ -191,14 +259,13 @@ function App() {
                 <button onClick={() => setSortLens('emerging')} className={`px-4 py-2 rounded-md font-medium text-sm ${sortLens === 'emerging' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>Emerging</button>
             </div>
           </div>
-          {/* CORRECTED Conditional Rendering */}
           {loading ? (
-            <div className="text-center py-10 text-gray-400">Loading signals...</div> 
+            <div className="text-center py-10">Loading signals...</div>
           ) : error ? (
-            <div className="text-center py-10 text-red-400">{error}</div> 
-          ) : signals.length === 0 ? (
+            <div className="text-red-400 text-center py-10">{error}</div>
+          ) : sortedSignals.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
-              <h2>No signals found on the testnet.</h2>
+              <h2>No signals found matching the current criteria.</h2>
             </div>
           ) : (
             <SignalTable signals={sortedSignals} provider={provider} metricLens={metricLens} />
