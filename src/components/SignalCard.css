@@ -1,0 +1,111 @@
+/* src/components/SignalCard.css */
+.signal-card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  transition: all 0.2s ease;
+}
+
+.signal-card:hover {
+  border-color: #10b981;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1);
+}
+
+.signal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.signal-identity {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.signal-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.signal-info {
+  flex: 1;
+}
+
+.signal-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: white;
+  margin-bottom: 4px;
+}
+
+.signal-emoji {
+  margin-right: 8px;
+}
+
+.signal-id {
+  font-size: 0.85rem;
+  color: #999;
+  font-family: monospace;
+}
+
+.signal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stake-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.stake-btn.primary {
+  background: #10b981;
+  color: white;
+}
+
+.stake-btn.primary:hover:not(:disabled) {
+  background: #059669;
+}
+
+.stake-btn.secondary {
+  background: #374151;
+  color: #d1d5db;
+  border: 1px solid #4b5563;
+}
+
+.stake-btn.secondary:hover:not(:disabled) {
+  background: #4b5563;
+}
+
+.unstake-btn {
+  padding: 8px 16px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: transparent;
+  color: #f59e0b;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.9rem;
+}
+
+.unstake-btn:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.stake-btn:disabled,
+.unstake-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

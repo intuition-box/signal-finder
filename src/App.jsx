@@ -1,30 +1,19 @@
 // src/App.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { processSignalData } from './utils/analysis.js';
+import { processSignalData, createDefaultTrend } from './utils/analysis.js';
 import { SignalTable } from './components/SignalTable.jsx';
 import { ethers } from 'ethers';
 
-// NEW: All traffic goes through our local proxy
-const GRAPH_URL = "/graphql"; 
-const WSS_URL = `wss://${window.location.host}/graphql`;
+const GRAPH_URL = import.meta.env.VITE_API_ENDPOINT || "/graphql";
 
-// Query 1: Fetches the 100 *most recently active* terms
-const GET_TERMS_LIST = `
-  query GetTermsList {
-    terms(limit: 100, order_by: {updated_at: desc}) {
+// Query 1: Fetches the 10 *most valuable* terms (for Heavyweights)
+const GET_HEAVYWEIGHT_TERMS = `
+  query GetHeavyweightTerms {
+    terms(limit: 10, order_by: {total_market_cap: desc}) {
       id
-      updated_at
       total_market_cap
       atom { label image }
       positions_aggregate { aggregate { count } }
-    }
-  }
-`;
-
-// Query 2: Fetches the raw position history
-const GET_POSITIONS_HISTORY = `
-  query GetPositionsHistory($termId: String!) {
-    term(id: $termId) {
       positions(order_by: {created_at: asc}, limit: 1000) {
         account_id
         shares
@@ -34,7 +23,24 @@ const GET_POSITIONS_HISTORY = `
   }
 `;
 
-// --- UI Components ---
+// Query 2: Fetches the 100 *most recently active* terms (for Trending/Emerging)
+const GET_ACTIVE_TERMS = `
+  query GetActiveTerms {
+    terms(limit: 100, order_by: {updated_at: desc}) {
+      id
+      updated_at
+      total_market_cap
+      atom { label image }
+      positions_aggregate { aggregate { count } }
+      positions(order_by: {created_at: asc}, limit: 1000) {
+        account_id
+        shares
+        created_at
+      }
+    }
+  }
+`;
+
 const WalletConnect = ({ account, onConnect }) => {
   const [isConnecting, setIsConnecting] = useState(false);
   const handleConnect = async () => {
@@ -50,30 +56,6 @@ const WalletConnect = ({ account, onConnect }) => {
   );
 };
 
-const NetworkStatus = ({ wsStatus, blockNumber }) => {
-    const getStatusColor = () => {
-        switch(wsStatus) {
-            case 'connected': return 'bg-green-500';
-            case 'connecting': return 'bg-yellow-500';
-            default: return 'bg-red-500';
-        }
-    };
-    return (
-        <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2" title={`WebSocket Status: ${wsStatus}`}>
-                <div className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'animate-pulse' : ''} ${getStatusColor()}`} />
-                <span className="text-sm text-gray-400">LIVE</span>
-            </div>
-            {blockNumber && (
-                <div className="px-3 py-1 bg-gray-900 border border-gray-700 rounded-md">
-                    <span className="text-sm text-green-400 font-mono">{blockNumber}</span>
-                </div>
-            )}
-        </div>
-    );
-};
-
-// --- Main App Component ---
 function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,8 +64,6 @@ function App() {
   const [metricLens, setMetricLens] = useState('capital');
   const [sortLens, setSortLens] = useState('heavyweight');
   const [error, setError] = useState(null);
-  const [wsStatus, setWsStatus] = useState('connecting');
-  const [blockNumber, setBlockNumber] = useState(null);
 
   const connectWallet = async () => {
     if (window.ethereum) {
@@ -105,12 +85,14 @@ function App() {
     setLoading(true);
     setError(null);
     try {
+      const query = sortLens === 'heavyweight' ? GET_HEAVYWEIGHT_TERMS : GET_ACTIVE_TERMS;
+
       const listResponse = await fetch(GRAPH_URL, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: GET_TERMS_LIST })
+        body: JSON.stringify({ query })
       });
       const listData = await listResponse.json();
-      if (listData.errors) throw new Error(`GraphQL Error (List): ${JSON.stringify(listData.errors)}`);
+      if (listData.errors) throw new Error(`GraphQL Error: ${JSON.stringify(listData.errors)}`);
       
       const baseTerms = listData.data?.terms;
       if (!baseTerms || baseTerms.length === 0) {
@@ -118,22 +100,8 @@ function App() {
         console.warn("No terms found matching the query.");
         return;
       }
-
-      const historyPromises = baseTerms.map(term =>
-        fetch(GRAPH_URL, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: GET_POSITIONS_HISTORY, variables: { termId: term.id } })
-        }).then(res => res.json())
-      );
-      const historyResults = await Promise.all(historyPromises);
-
-      const enrichedTerms = baseTerms.map((term, index) => {
-        const historyData = historyResults[index];
-        if (historyData.errors) console.error(`Error fetching history for ${term.id}:`, historyData.errors);
-        return { ...term, positions: historyData?.data?.term?.positions || [] };
-      });
       
-      const processedSignals = processSignalData(enrichedTerms);
+      const processedSignals = processSignalData(baseTerms);
       setSignals(processedSignals);
 
     } catch (err) {
@@ -142,50 +110,11 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, []); 
+  }, [sortLens]); // Re-fetch when sortLens changes
 
   useEffect(() => {
     fetchAllSignalData();
   }, [fetchAllSignalData]);
-
-  // WebSocket useEffect
-  useEffect(() => {
-    let ws;
-    let reconnectTimeout;
-    const setupWebSocket = () => {
-      ws = new WebSocket(WSS_URL, 'graphql-ws'); // Use proxied URL
-      setWsStatus('connecting');
-      ws.onopen = () => {
-        setWsStatus('connected');
-        ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
-        ws.send(JSON.stringify({
-          id: 'block-subscription',
-          type: 'start',
-          payload: { query: 'subscription { newBlocks { number } }' }
-        }));
-      };
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'data' && data.payload?.data?.newBlocks) {
-          setBlockNumber(parseInt(data.payload.data.newBlocks.number, 16));
-        }
-      };
-      ws.onerror = (err) => {
-        console.error("WebSocket Error:", err);
-        setWsStatus('error');
-      };
-      ws.onclose = () => {
-        setWsStatus('disconnected');
-        clearTimeout(reconnectTimeout);
-        reconnectTimeout = setTimeout(setupWebSocket, 5000);
-      };
-    };
-    setupWebSocket();
-    return () => {
-      clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
-    };
-  }, []); // Runs once on mount
 
   // --- Sorting Logic with Filters ---
   const sortedSignals = useMemo(() => {
@@ -215,21 +144,20 @@ function App() {
 
     switch (sortLens) {
       case 'emerging':
-        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold && s.communityTrend.recentStakers > 0);
-        sortedList = filteredSignals.sort((a, b) => b.communityTrend.recentStakers - a.communityTrend.recentStakers);
+        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold);
+        sortedList = filteredSignals.sort((a, b) => b[trendType].acceleration - a[trendType].acceleration);
         break;
       case 'trending':
-        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold && s.capitalTrend.recentCapital > 0);
-        sortedList = filteredSignals.sort((a, b) => b.capitalTrend.recentCapital - a.capitalTrend.recentCapital);
+        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold);
+        sortedList = filteredSignals.sort((a, b) => b[trendType].velocity - a[trendType].velocity);
         break;
       case 'heavyweight':
       default:
-        filteredSignals = signalsWithData.filter(s => s[totalKey] > 0);
-        sortedList = filteredSignals.sort((a, b) => b[totalKey] - a[totalKey]);
+        sortedList = signalsWithData.sort((a, b) => b.numericTotal - a.numericTotal);
         break;
     }
     
-    return sortedList.slice(0, 10); // Show only the Top 10 from the sorted/filtered list
+    return sortedList.slice(0, 10);
     
   }, [signals, metricLens, sortLens]);
 
@@ -239,10 +167,7 @@ function App() {
         <header className="mb-8">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-white">Intuition Protocol Signal Finder</h1>
-            <div className="flex items-center gap-4">
-                <NetworkStatus wsStatus={wsStatus} blockNumber={blockNumber} />
-                <WalletConnect account={account} onConnect={connectWallet} />
-            </div>
+            <WalletConnect account={account} onConnect={connectWallet} />
           </div>
           <p className="text-gray-400">Tracking live staking velocity to find signals of emerging trust.</p>
         </header>
@@ -262,13 +187,18 @@ function App() {
           {loading ? (
             <div className="text-center py-10">Loading signals...</div>
           ) : error ? (
-            <div className="text-red-400 text-center py-10">{error}</div>
+            <div className="text-red-400 text-center py-10">{error.message}</div>
           ) : sortedSignals.length === 0 ? (
             <div className="text-center py-10 text-gray-400">
               <h2>No signals found matching the current criteria.</h2>
             </div>
           ) : (
-            <SignalTable signals={sortedSignals} provider={provider} metricLens={metricLens} />
+            <SignalTable
+              signals={sortedSignals}
+              provider={provider}
+              metricLens={metricLens}
+              refreshData={fetchAllSignalData} // Pass the refresh function
+            />
           )}
         </main>
       </div>

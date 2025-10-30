@@ -1,0 +1,78 @@
+/* src/components/AtomStakingModal.css */
+.staking-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.staking-modal {
+  background: #1a1a1a;
+  border-radius: 16px;
+  padding: 24px;
+  width: 90%;
+  max-width: 420px;
+  color: white;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.amount-section {
+  margin-bottom: 20px;
+}
+
+.amount-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.amount-section input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #333;
+  border-radius: 8px;
+  background: #2a2a2a;
+  color: white;
+}
+
+.balance-info {
+  margin-top: 8px;
+  font-size: 0.9rem;
+  color: #999;
+}
+
+.submit-btn {
+  width: 100%;
+  padding: 16px;
+  background: #10b981;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

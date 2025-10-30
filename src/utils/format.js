@@ -1,17 +1,29 @@
 // src/utils/format.js
-export const formatNumber = (num) => {
-  // Ensure we are working with a number
-  const number = Number(num);
-  if (isNaN(number)) return '0.00';
 
-  if (Math.abs(number) >= 1_000_000) {
-    return (number / 1_000_000).toFixed(2) + 'M';
+export const formatNumber = (value) => {
+  // Coerce value to a number, handling null/undefined
+  const num = Number(value);
+
+  // Guard against NaN (Not a Number)
+  if (isNaN(num)) {
+    return '0.00';
   }
-  if (Math.abs(number) >= 1_000) {
-    return (number / 1_000).toFixed(1) + 'K';
+
+  if (Math.abs(num) >= 1e9) {
+    return (num / 1e9).toFixed(1) + 'B';
   }
+  if (Math.abs(num) >= 1e6) {
+    return (num / 1e6).toFixed(1) + 'M';
+  }
+  if (Math.abs(num) >= 1e3) {
+    return (num / 1e3).toFixed(1) + 'K';
+  }
+
+  // Use toLocaleString for standard comma separation, but handle small numbers
+  if (num === 0) return '0.00';
+  if (Math.abs(num) < 1) return num.toFixed(2);
   
-  return number.toLocaleString(undefined, {
+  return num.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });

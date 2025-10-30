@@ -1,0 +1,11 @@
+# codegen.yml
+schema: 'https://testnet.intuition.sh/v1/graphql'
+documents: 'src/graphql/**/*.graphql'
+generates:
+  src/graphql/generated.ts:
+    plugins:
+      - 'typescript'
+      - 'typescript-operations'
+      - 'typescript-react-query'
+    config:
+      fetcher: 'graphql-request' # We'll need to install this

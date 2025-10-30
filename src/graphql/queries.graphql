@@ -1,0 +1,30 @@
+# src/graphql/queries.graphql
+
+query GetHeavyweightTerms {
+  terms(limit: 10, order_by: {total_market_cap: desc}) {
+    id
+    total_market_cap
+    atom { label image }
+    positions_aggregate { aggregate { count } }
+    positions(order_by: {created_at: asc}, limit: 1000) {
+      account_id
+      shares
+      created_at
+    }
+  }
+}
+
+query GetActiveTerms {
+  terms(limit: 100, order_by: {updated_at: desc}) {
+    id
+    updated_at
+    total_market_cap
+    atom { label image }
+    positions_aggregate { aggregate { count } }
+    positions(order_by: {created_at: asc}, limit: 1000) {
+      account_id
+      shares
+      created_at
+    }
+  }
+}
