@@ -14,7 +14,6 @@ export function createDefaultTrend() {
 // Calculates LOGARITHMIC derivatives from a set of {time, value} points
 function calculateLogDerivatives(dataPoints, bucketSizeHours = 1) {
     const defaultResult = createDefaultTrend();
-    // Use only points with positive values for log stability
     const validPoints = dataPoints?.filter(p => p.value > 0);
     if (!validPoints || validPoints.length < 2) return defaultResult;
 
@@ -25,7 +24,6 @@ function calculateLogDerivatives(dataPoints, bucketSizeHours = 1) {
         const last = logPoints[logPoints.length - 1];
         const secondLast = logPoints[logPoints.length - 2];
         const lastLogValueChange = last.value - secondLast.value;
-        // Use a minimum of 1 hour for time diff to avoid massive velocity spikes
         const lastTimeChangeHours = Math.max(1, (last.time.getTime() - secondLast.time.getTime()) / (1000 * 3600));
         velocity = lastLogValueChange / lastTimeChangeHours;
 
@@ -72,7 +70,8 @@ export const processSignalData = (terms) => {
         let communityTrend = createDefaultTrend();
 
         if (positions.length > 0) {
-            positions.sort((a, b) => new Date(a.created_at).getTime() - new Date(a.created_at).getTime());
+            // *** CRITICAL FIX: Sort by a.created_at vs b.created_at ***
+            const sortedPositions = [...positions].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
             const now = new Date();
             const twentyFourHoursAgo = now.getTime() - (24 * 60 * 60 * 1000);
@@ -85,7 +84,7 @@ export const processSignalData = (terms) => {
             let recentCapital = 0;
             let recentStakersSet = new Set();
 
-            positions.forEach(pos => {
+            sortedPositions.forEach(pos => {
                 const posTime = new Date(pos.created_at).getTime();
                 const capitalAmount = parseFloat(ethers.utils.formatEther(pos.shares || '0'));
                 
@@ -122,6 +121,8 @@ export const processSignalData = (terms) => {
             id: term.id,
             label: term.atom?.label,
             image: term.atom?.image,
+            type: term.type, // Pass the type
+            triple: term.triple, // 🦉 Pass the semantic triple data
             totalStaked: term.total_market_cap || '0',
             totalStakers: term.positions_aggregate?.aggregate?.count || 0,
             capitalTrend,

@@ -28,3 +28,23 @@ query GetActiveTerms {
     }
   }
 }
+
+# ⚡ NEW: Subscription for the live feed
+subscription NewClaimsSubscription {
+  newTriples(limit: 10, order_by: { id: desc }) {
+    id
+    type
+    atom {
+      label
+    }
+    subject {
+      label
+    }
+    predicate {
+      label
+    }
+    object {
+      label
+    }
+  }
+}

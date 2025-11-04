@@ -11,12 +11,13 @@ export default defineConfig({
   server: {
     open: true,
     proxy: {
-      // Proxy all requests from '/graphql' to the real API
+      // This rule proxies both HTTP and WebSockets
       '/graphql': {
         target: 'https://testnet.intuition.sh/v1/graphql',
-        changeOrigin: true, // Needed for virtual hosted sites
-        secure: false,      // Often needed for self-signed SSL certs
-        rewrite: (path) => path.replace(/^\/graphql/, '') // Remove the '/graphql' prefix
+        changeOrigin: true,
+        secure: false,
+        ws: true, // Enable WebSocket proxying
+        rewrite: (path) => path.replace(/^\/graphql/, ''),
       }
     }
   },

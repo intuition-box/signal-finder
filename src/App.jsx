@@ -3,14 +3,18 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { processSignalData, createDefaultTrend } from './utils/analysis.js';
 import { SignalTable } from './components/SignalTable.jsx';
 import { ethers } from 'ethers';
+import { LiveActivityFeed } from './components/LiveActivityFeed.jsx';
 
-const GRAPH_URL = import.meta.env.VITE_API_ENDPOINT || "/graphql";
+// Use the local proxy URLs
+const GRAPH_URL = "/graphql"; 
+const WSS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/graphql`;
 
-// Query 1: Fetches the 10 *most valuable* terms (for Heavyweights)
+// Query 1: Fetches the 10 *most valuable* terms (Atoms AND Triples)
 const GET_HEAVYWEIGHT_TERMS = `
   query GetHeavyweightTerms {
     terms(limit: 10, order_by: {total_market_cap: desc}) {
       id
+      type 
       total_market_cap
       atom { label image }
       positions_aggregate { aggregate { count } }
@@ -19,15 +23,21 @@ const GET_HEAVYWEIGHT_TERMS = `
         shares
         created_at
       }
+      triple {
+        subject { term_id label }
+        predicate { term_id label }
+        object { term_id label }
+      }
     }
   }
 `;
 
-// Query 2: Fetches the 100 *most recently active* terms (for Trending/Emerging)
+// Query 2: Fetches the 100 *most recently active* terms
 const GET_ACTIVE_TERMS = `
   query GetActiveTerms {
     terms(limit: 100, order_by: {updated_at: desc}) {
       id
+      type
       updated_at
       total_market_cap
       atom { label image }
@@ -36,6 +46,11 @@ const GET_ACTIVE_TERMS = `
         account_id
         shares
         created_at
+      }
+      triple {
+        subject { term_id label }
+        predicate { term_id label }
+        object { term_id label }
       }
     }
   }
@@ -56,6 +71,30 @@ const WalletConnect = ({ account, onConnect }) => {
   );
 };
 
+// We need to re-add NetworkStatus since the UI is calling it
+const NetworkStatus = ({ wsStatus, blockNumber }) => {
+    const getStatusColor = () => {
+        switch(wsStatus) {
+            case 'connected': return 'bg-green-500';
+            case 'connecting': return 'bg-yellow-500';
+            default: return 'bg-red-500';
+        }
+    };
+    return (
+        <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2" title={`WebSocket Status: ${wsStatus}`}>
+                <div className={`w-2 h-2 rounded-full ${wsStatus === 'connected' ? 'animate-pulse' : ''} ${getStatusColor()}`} />
+                <span className="text-sm text-gray-400">LIVE</span>
+            </div>
+            {blockNumber && (
+                <div className="px-3 py-1 bg-gray-900 border border-gray-700 rounded-md">
+                    <span className="text-sm text-green-400 font-mono">{blockNumber}</span>
+                </div>
+            )}
+        </div>
+    );
+};
+
 function App() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +103,9 @@ function App() {
   const [metricLens, setMetricLens] = useState('capital');
   const [sortLens, setSortLens] = useState('heavyweight');
   const [error, setError] = useState(null);
+  const [newClaim, setNewClaim] = useState(null);
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [blockNumber, setBlockNumber] = useState(null);
 
   const connectWallet = async () => {
     if (window.ethereum) {
@@ -110,11 +152,54 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [sortLens]); // Re-fetch when sortLens changes
+  }, [sortLens]);
 
   useEffect(() => {
     fetchAllSignalData();
   }, [fetchAllSignalData]);
+
+  // --- ⚡ CORRECTED WebSocket logic ---
+  useEffect(() => {
+    let ws;
+    let reconnectTimeout;
+    const setupWebSocket = () => {
+      ws = new WebSocket(WSS_URL, 'graphql-ws');
+      setWsStatus('connecting'); // Set status
+      ws.onopen = () => {
+        // 1. Send connection_init
+        ws.send(JSON.stringify({ type: 'connection_init', payload: {} }));
+      };
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        // 2. Wait for connection_ack
+        if (data.type === 'connection_ack') {
+          setWsStatus('connected');
+          // 3. NOW we are clear to send subscriptions
+          ws.send(JSON.stringify({
+            id: 'claims-sub',
+            type: 'start',
+            // 🕸️ FIXED: Query for term_id and label
+            payload: { query: `subscription NewClaimsSubscription { newTriples(limit: 1, order_by: { created_at: desc }) { id type subject { term_id label } predicate { term_id label } object { term_id label } } }` }
+          }));
+        }
+        // 4. Handle incoming data
+        if (data.type === 'data' && data.payload?.data?.newTriples) {
+          setNewClaim(data.payload.data.newTriples[0]);
+        }
+      };
+      ws.onerror = (err) => { console.error("WebSocket Error:", err); setWsStatus('error');};
+      ws.onclose = () => {
+        setWsStatus('disconnected');
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = setTimeout(setupWebSocket, 5000);
+      };
+    };
+    setupWebSocket();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (ws) ws.close();
+    };
+  }, []); // Runs once on mount
 
   // --- Sorting Logic with Filters ---
   const sortedSignals = useMemo(() => {
@@ -122,38 +207,38 @@ function App() {
     const HEAVYWEIGHT_MIN_COMMUNITY = 500;
 
     const signalsWithData = signals.map(s => {
-      let numericTotal = 0;
-      if (metricLens === 'capital') {
-        try { numericTotal = parseFloat(ethers.utils.formatEther(s.totalStaked || '0')); } catch {}
-      } else { numericTotal = s.totalStakers || 0; }
+      let numericCapitalTotal = 0;
+      let numericCommunityTotal = s.totalStakers || 0;
+      try { numericCapitalTotal = parseFloat(ethers.utils.formatEther(s.totalStaked || '0')); } catch {}
       
       return {
         ...s,
-        numericTotal,
+        numericCapitalTotal, 
+        numericCommunityTotal,
         capitalTrend: s.capitalTrend || createDefaultTrend(),
         communityTrend: s.communityTrend || createDefaultTrend()
       };
     });
 
     const trendType = metricLens === 'capital' ? 'capitalTrend' : 'communityTrend';
-    const totalKey = metricLens === 'capital' ? 'numericTotal' : 'numericCommunityTotal';
-    const threshold = metricLens === 'capital' ? HEAVYWEIGHT_MIN_CAPITAL : HEAVYWEIGHT_MIN_COMMUNITY;
+    const totalKey = metricLens === 'capital' ? 'numericCapitalTotal' : 'numericCommunityTotal';
+    const threshold = metricLens ==='capital' ? HEAVYWEIGHT_MIN_CAPITAL : HEAVYWEIGHT_MIN_COMMUNITY;
 
-    let filteredSignals;
     let sortedList;
-
     switch (sortLens) {
       case 'emerging':
-        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold);
-        sortedList = filteredSignals.sort((a, b) => b[trendType].acceleration - a[trendType].acceleration);
+        sortedList = signalsWithData
+          .filter(s => s[totalKey] < threshold)
+          .sort((a, b) => b[trendType].acceleration - a[trendType].acceleration);
         break;
       case 'trending':
-        filteredSignals = signalsWithData.filter(s => s[totalKey] < threshold);
-        sortedList = filteredSignals.sort((a, b) => b[trendType].velocity - a[trendType].velocity);
+        sortedList = signalsWithData
+          .filter(s => s[totalKey] < threshold)
+          .sort((a, b) => b[trendType].velocity - a[trendType].velocity);
         break;
       case 'heavyweight':
       default:
-        sortedList = signalsWithData.sort((a, b) => b.numericTotal - a.numericTotal);
+        sortedList = signalsWithData.sort((a, b) => b[totalKey] - a[totalKey]);
         break;
     }
     
@@ -163,11 +248,15 @@ function App() {
 
   return (
     <div className="min-h-screen p-4 sm:p-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-full px-4 lg:px-8 mx-auto"> 
         <header className="mb-8">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-white">Intuition Protocol Signal Finder</h1>
-            <WalletConnect account={account} onConnect={connectWallet} />
+            <div className="flex items-center gap-4">
+              {/* Add NetworkStatus back to the header */}
+              <NetworkStatus wsStatus={wsStatus} blockNumber={blockNumber} />
+              <WalletConnect account={account} onConnect={connectWallet} />
+            </div>
           </div>
           <p className="text-gray-400">Tracking live staking velocity to find signals of emerging trust.</p>
         </header>
@@ -184,22 +273,36 @@ function App() {
                 <button onClick={() => setSortLens('emerging')} className={`px-4 py-2 rounded-md font-medium text-sm ${sortLens === 'emerging' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>Emerging</button>
             </div>
           </div>
-          {loading ? (
-            <div className="text-center py-10">Loading signals...</div>
-          ) : error ? (
-            <div className="text-red-400 text-center py-10">{error.message}</div>
-          ) : sortedSignals.length === 0 ? (
-            <div className="text-center py-10 text-gray-400">
-              <h2>No signals found matching the current criteria.</h2>
+          
+          {/* --- 👽 Two-Column Layout (Feed on the left) --- */}
+          <div className="flex flex-col lg:flex-row-reverse gap-8">
+            <div className="lg:w-1/4 lg:max-w-sm flex-shrink-0">
+              <LiveActivityFeed 
+                newClaim={newClaim} 
+                provider={provider}
+                refreshData={fetchAllSignalData} // Pass refresh to the modal
+              />
             </div>
-          ) : (
-            <SignalTable
-              signals={sortedSignals}
-              provider={provider}
-              metricLens={metricLens}
-              refreshData={fetchAllSignalData} // Pass the refresh function
-            />
-          )}
+            <div className="lg:flex-1">
+              {loading ? (
+                <div className="text-center py-10">Loading signals...</div>
+              ) : error ? (
+                <div className="text-red-400 text-center py-10">{error.message}</div>
+              ) : sortedSignals.length === 0 ? (
+                <div className="text-center py-10 text-gray-400">
+                  <h2>No signals found matching the current criteria.</h2>
+                </div>
+              ) : (
+                <SignalTable
+                  signals={sortedSignals}
+                  provider={provider}
+                  metricLens={metricLens}
+                  sortLens={sortLens} // Pass the active lens
+                  refreshData={fetchAllSignalData} // Pass the refresh function
+                />
+              )}
+            </div>
+          </div>
         </main>
       </div>
     </div>

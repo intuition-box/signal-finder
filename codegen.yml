@@ -8,4 +8,5 @@ generates:
       - 'typescript-operations'
       - 'typescript-react-query'
     config:
-      fetcher: 'graphql-request' # We'll need to install this
+      fetcher: 'graphql-request'
+      reactQueryVersion: 5 # <-- THE CRITICAL FIX

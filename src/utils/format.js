@@ -23,6 +23,7 @@ export const formatNumber = (value) => {
   if (num === 0) return '0.00';
   if (Math.abs(num) < 1) return num.toFixed(2);
   
+  // Use toLocaleString only when we are sure `num` is a valid number
   return num.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
