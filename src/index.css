@@ -10,12 +10,53 @@ body {
 
 /* In src/index.css, at the bottom */
 @layer utilities {
-  @keyframes pulse-fast-short {
-    0%, 100% { opacity: 0; }
-    50% { opacity: 0.3; }
+  /* Add to your CSS file */
+  @keyframes pulse-once {
+    0% { opacity: 0.3; }
+    50% { opacity: 0.8; }
+    100% { opacity: 0.3; }
   }
-  .animate-pulse-fast-short {
-    /* Run the animation once, for 1.5 seconds */
-    animation: pulse-fast-short 1.5s ease-in-out;
+  
+  .animate-pulse-once {
+    animation: pulse-once 2s ease-in-out;
+  }
+  
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #374151 #1f2937;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #1f2937;
+    border-radius: 2px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #374151;
+    border-radius: 2px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #4b5563;
+  }
+  
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2; /* Standard property for compatibility */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3; /* Standard property for compatibility */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 }
