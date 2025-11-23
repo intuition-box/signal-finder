@@ -2,8 +2,10 @@
 import React, { useMemo, useState } from 'react';
 import { ethers } from 'ethers';
 import { SparklineChart } from './SparklineChart.jsx';
+import { PORTAL_BASE_URL } from '../config/config.js';
 import { formatNumber } from '../utils/format.js';
 import { createDefaultTrend } from '../utils/analysis.js';
+
 
 // Enhanced Triple component with better compact display
 const TripleClaim = ({ triple, compact = false }) => {
@@ -108,7 +110,7 @@ const getRowName = (index, sortLens) => {
 
 export const SignalTable = ({ signals, provider, metricLens, refreshData, sortLens }) => {
   const [expandedRows, setExpandedRows] = useState(new Set());
-  const portalBaseUrl = "https://portal.intuition.systems/explore";
+  const portalBaseUrl = PORTAL_BASE_URL;
   const isHeavyweight = sortLens === 'heavyweight';
 
   // Memoized IPFS gateway conversion

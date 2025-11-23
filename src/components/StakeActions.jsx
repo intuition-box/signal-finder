@@ -1,12 +1,12 @@
 // src/components/StakeActions.jsx
-import React from 'react';
+import React, { useState } from 'react';
 import { ethers } from 'ethers';
-import { useState } from 'react';
+import { MULTIVAULT_ADDRESS } from '../config/config.js';
 
-// 👑 Verified Contract Addresses & ABI (from IMultiVault.sol)
-const INTUITION_MULTIVAULT_ADDRESS = "0xB92EA1B47E4ABD0a520E9138BB59dBd1bC6C475B";
+// 👑 Updated ABI to support depositBatch
 const INTUITION_MULTIVAULT_ABI = [
   "function deposit(address receiver, bytes32 termId, uint256 curveId, uint256 minShares) external payable returns (uint256)",
+  "function depositBatch(address receiver, bytes32[] termIds, uint256[] curveIds, uint256[] assets, uint256[] minShares) external payable returns (uint256[])",
   "function redeem(address receiver, bytes32 termId, uint256 curveId, uint256 shares, uint256 minAssets) external returns (uint256)"
 ];
 
@@ -22,51 +22,36 @@ export const StakeActions = ({ signalId, provider, refreshData, type }) => {
     try {
       const signer = provider.getSigner();
       const userAddress = await signer.getAddress();
-      const intuitionContract = new ethers.Contract(INTUITION_MULTIVAULT_ADDRESS, INTUITION_MULTIVAULT_ABI, signer);
+      const intuitionContract = new ethers.Contract(MULTIVAULT_ADDRESS, INTUITION_MULTIVAULT_ABI, signer);
       const amountWei = ethers.utils.parseEther(amount);
 
-      const tx = await intuitionContract.deposit(
+      // 👑 MAINNET MIGRATION: Using depositBatch as per v2 standard
+      // depositBatch(receiver, [termId], [curveId], [assets], [minShares])
+      const tx = await intuitionContract.depositBatch(
         userAddress, 
-        signalId, 
-        curveId, // 1 for Support/Stake, 2 for Oppose
-        0, 
-        { value: amountWei }
+        [signalId],        // Array of term IDs
+        [curveId],         // Array of curve IDs (1 for Support, etc.)
+        [amountWei],       // Array of asset amounts
+        [0],               // Array of minShares (0 for now)
+        { value: amountWei } // ⚡ CRITICAL: Sending ETH/TRUST as msg.value
       );
       
       await tx.wait(); // Wait for confirmation
       
       alert('Transaction successful!');
-      if (refreshData) refreshData(); // Refresh the dashboard
+      if (refreshData) refreshData(); 
 
     } catch (error) {
       console.error('Transaction failed:', error);
-      alert(`Transaction failed: ${error.message}`);
+      alert(`Transaction failed: ${error.message || error.reason || 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
   };
   
   const handleUnstake = async (curveId) => {
-     alert('Unstaking (redeeming) requires knowing your *share* balance. This simplified version will attempt to unstake the $TRUST amount as shares, which may fail if you dont have enough shares.');
-    setIsLoading(true);
-    try {
-      const signer = provider.getSigner();
-      const userAddress = await signer.getAddress();
-      const intuitionContract = new ethers.Contract(INTUITION_MULTIVAULT_ADDRESS, INTUITION_MULTIVAULT_ABI, signer);
-      
-      const sharesToRedeem = ethers.utils.parseEther(amount); // This is a placeholder
-      
-      const tx = await intuitionContract.redeem(userAddress, signalId, curveId, sharesToRedeem, 0);
-      await tx.wait();
-      
-      alert('Unstaking successful!');
-      if (refreshData) refreshData();
-    } catch (error) {
-      console.error('Unstaking failed:', error);
-      alert(`Unstaking failed: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+     alert('Unstaking requires fetching your current share balance. This feature is coming soon.');
+     // Requires reading 'getShares' first, which we will add in the next phase.
   };
 
   const isTriple = type === 'Triple' || type === 'CounterTriple';
